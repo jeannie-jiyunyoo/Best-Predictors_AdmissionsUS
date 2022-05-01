@@ -1,0 +1,471 @@
+---
+title: "Determining the best predictors for admission rates across American universities"
+author: "Jeannie Jiyun Yoo"
+date: "04/11/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#packages
+install.packages("car")
+library(car)
+
+```
+
+
+```{r}
+#loading the data
+data <- read.csv('~/Desktop/STA302/STA302 Video Project/VPdataset.csv')
+
+#cleaning the data - Saint Elizabeth College of Nursing has no data available, will omit it from data.
+data <- subset(data, data$ADM_RATE > 0)
+
+#Converting Median income from Dollars to Thousands of Dollars
+data$MD_FAMINC = (data$MD_FAMINC / 1000)
+
+data$UNITID = NULL
+data$X = NULL
+data$INSTNM = NULL
+data <- na.omit(data)
+```
+
+
+```{r}
+
+model <- lm(ADM_RATE~., data=data)
+summary(model)
+
+qwer = data
+qwer$STABBR = NULL
+qwer$REGION = NULL
+qwer = na.omit(qwer)
+
+rewq <- lm(ADM_RATE~., data = qwer)
+
+summary(rewq)
+
+anova(rewq, model)
+
+
+
+```
+
+```{r}
+#EDA
+
+#There seems to be a generally negative relationship between median income and admission rate...
+plot(data$ADM_RATE ~ data$MD_FAMINC)
+lines(lowess(data$ADM_RATE ~ data$MD_FAMINC))
+mod1 <- lm(data$ADM_RATE ~ data$MD_FAMINC)
+summary(mod1)
+```
+
+
+```{r}
+#Checking Condition 1 (no condition 2 as Simple Regression)
+par(mfrow = c(2,2))
+plot(data$ADM_RATE ~ fitted(mod1))
+abline(a = 0, b = 1)
+lines(lowess(data$ADM_RATE ~ fitted(mod1)))
+
+qqnorm(resid(mod1))
+qqline(resid(mod1))
+
+#no residual plot because condition 1 fails
+#resid1 <- resid(mod1)
+#plot(resid1 ~ data$MD_FAMINC)
+#lines(lowess(resid1 ~ data$MD_FAMINC))
+```
+
+
+```{r}
+#boxcox to see if transformation can fix, probably not as condition 1 fails pretty obviously
+
+#Adding 0.005 to all median income data points to be able to run boxCox
+
+data$MD_FAMINCbc = (data$MD_FAMINC + 0.005)
+
+pt <- powerTransform(cbind(data$ADM_RATE, data$MD_FAMINCbc)~1)
+summary(pt)
+
+#powerTransform produces lambdas of 1.61 and 0.58 for Admission rate and median family income respectively. We round to 2 and 1/2 respectively for the sake of interpretability 
+data1 <- data
+data1$ADM_RATE = data$ADM_RATE^2
+data1$MD_FAMINC = data$MD_FAMINC^(1/2)
+```
+
+```{r}
+plot(data1$ADM_RATE ~ data1$MD_FAMINC)
+lines(lowess(data1$ADM_RATE ~ data1$MD_FAMINC))
+mod1 <- lm(data1$ADM_RATE ~ data1$MD_FAMINC)
+summary(mod1)
+
+par(mfrow = c(2,2))
+plot(data1$ADM_RATE ~ fitted(mod1))
+abline(a = 0, b = 1)
+lines(lowess(data1$ADM_RATE ~ fitted(mod1)))
+
+#don't make residual plots bc condition 1 fails
+#resid1 <- resid(mod1)
+#plot(resid1 ~ data1$MD_FAMINC)
+#lines(lowess(resid1 ~ data1$MD_FAMINC))
+
+qqnorm(resid(mod1))
+qqline(resid(mod1))
+```
+
+
+```{r}
+#other economic variables include unemployment and poverty rate. EDA and Checking Condition 2:
+
+par(mfrow = c(2,2))
+
+#we use MD_FAMINCbc to avoid logging 0
+data1$MD_FAMINC = log(1000 * data1$MD_FAMINCbc)
+pairs(cbind(data1$MD_FAMINC, data$POVERTY_RATE, data$UNEMP_RATE))
+
+mod2 <- lm(data$ADM_RATE ~ data1$MD_FAMINC + data$UNEMP_RATE + data$POVERTY_RATE)
+summary(mod2)
+mod3 <- lm(data$ADM_RATE ~ data1$MD_FAMINC)
+summary(mod3)
+anova(mod3, mod2)
+
+```
+
+
+```{r}
+#Checking condition 1 shows that there seems to be some function g(), but definitely not identity function. We have to transform variables.
+
+plot(data$ADM_RATE~fitted(mod2))
+lines(lowess(data1$ADM_RATE~fitted(mod2)))
+
+
+#boxCox
+pt <- powerTransform(cbind(data$ADM_RATE, data$MD_FAMINCbc, data$UNEMP_RATE, data$POVERTY_RATE)~1)
+summary(pt)
+
+#transforming variables
+
+data1$ADM_RATE = data$ADM_RATE ^ 2
+data1$MD_FAMINC = data$MD_FAMINC ^ 0.5
+data1$UNEMP_RATE = 1 / data$UNEMP_RATE
+data1$POVERTY_RATE = data$POVERTY_RATE ^ -0.5
+
+#Rechecking Conditions
+par(mfrow = c(2,2))
+hist(data1$ADM_RATE)
+hist(data1$MD_FAMINC)
+hist(data1$UNEMP_RATE)
+hist(data1$POVERTY_RATE)
+
+mod2 <- lm(data1$ADM_RATE~ data1$MD_FAMINC + data1$UNEMP_RATE + data1$POVERTY_RATE)
+summary(mod2)
+
+plot(data1$ADM_RATE ~ fitted(mod2))
+pairs(cbind(data$ADM_RATE, data1$MD_FAMINC, data1$UNEMP_RATE, data1$POVERTY_RATE))
+```
+
+
+```{r}
+#adding in control of institution, faculty pay, cost of attending, number of branches, proportion of full time faculty
+
+data2 <- data1
+
+data2$PUBLIC = as.numeric(data2$CONTROL == 1)
+data2$NONPROFIT = as.numeric(data2$CONTROL == 2)
+data2$PROFIT = as.numeric(data2$CONTROL == 3)
+
+#EDA
+par(mfrow = c(2,2))
+hist(data2$AVGFACSAL)
+hist(data2$COSTT4_A)
+hist(data2$NUMBRANCH)
+hist(data2$PFTFAC)
+
+#condition 2
+pairs(cbind(data2$ADM_RATE, data2$MD_FAMINC, data2$AVGFACSAL, data2$COSTT4_A, data2$NUMBRANCH, data2$PFTFAC), cbind("adm rate", "sqrt(FamInc)", "AvgFacSal", "Cost", "Branches", "%FT"))
+plot(data2$ADM_RATE ~ data2$AVGFACSAL)
+lines(lowess(data2$ADM_RATE ~ data2$AVGFACSAL))
+
+```
+
+
+```{r}
+#boxCox for mod2
+
+p2 <- powerTransform(cbind(data2$AVGFACSAL, data2$COSTT4_A, data2$PFTFAC)~1)
+summary(p2)
+
+data2$AVGFACSAL = data$AVGFACSAL ^ 0.5
+data2$COSTT4_A = data$COSTT4_A ^ 1/3
+
+par(mfrow = c(2,2))
+hist(data2$AVGFACSAL)
+hist(data2$COSTT4_A)
+hist(data2$NUMBRANCH)
+hist(data2$PFTFAC)
+
+#rechecking condition 2
+pairs(cbind(data2$ADM_RATE, data2$MD_FAMINC, data2$AVGFACSAL, data2$COSTT4_A, data2$NUMBRANCH, data2$PFTFAC), cbind("ADM", "sqrt(FamInc)", "AvgFacSal", "Cost", "Branches", "%FT"))
+
+#condition 1
+mod3 <- lm(data2$ADM_RATE~ data2$MD_FAMINC + data2$UNEMP_RATE + data2$POVERTY_RATE + data2$NONPROFIT + data2$PROFIT + data2$AVGFACSAL + data2$COSTT4_A + data2$NUMBRANCH + data2$PFTFAC)
+summary(mod3)
+plot(data2$ADM_RATE ~ fitted(mod3))
+lines(lowess(data2$ADM_RATE ~ fitted(mod3)))
+
+#Partial F Test for Income and unemployment
+mod3restrict <-lm(data2$ADM_RATE~ data2$POVERTY_RATE + data2$NONPROFIT + data2$PROFIT + data2$AVGFACSAL + data2$COSTT4_A + data2$NUMBRANCH + data2$PFTFAC)
+summary(mod3restrict)
+
+anova(mod3restrict, mod3)
+
+plot(fitted(mod3restrict), data2$ADM_RATE)
+lines(lowess(fitted(mod3restrict) ~ data2$ADM_RATE))
+```
+
+
+```{r}
+#reboxcoxing variables kept
+power <- powerTransform(cbind(data$ADM_RATE, data$POVERTY_RATE, data$AVGFACSAL, data$COSTT4_A, data$PFTFAC)~1)
+summary(power)
+
+data3 = data2
+
+data3$ADM_RATE = data$ADM_RATE ^ 2
+data3$POVERTY_RATE = data$POVERTY_RATE ^ -1
+data3$AVGFACSAL = data$AVGFACSAL ^ 1/3
+data3$COSTT4_A = data$COSTT4_A ^ 1/3
+
+#rechecking partial F test with new variables
+mod3 <- lm(data3$ADM_RATE~ data3$MD_FAMINC + data3$UNEMP_RATE + data3$POVERTY_RATE + data3$NONPROFIT + data3$PROFIT + data3$AVGFACSAL + data3$COSTT4_A + data3$NUMBRANCH + data3$PFTFAC)
+mod3restrict <- lm(data3$ADM_RATE~ data3$POVERTY_RATE + data3$NONPROFIT + data3$PROFIT + data3$AVGFACSAL + data3$COSTT4_A + data3$NUMBRANCH + data3$PFTFAC)
+summary(mod3restrict)
+
+pairs(cbind(data3$ADM_RATE, data3$POVERTY_RATE, data3$AVGFACSAL, data3$COSTT4_A, data3$PFTFAC), label = c("ADM", "POVERTY", "AVGFACSAL", "COST", "PCTFTAC"))
+
+anova(mod3restrict, mod3)
+  
+plot(data3$ADM_RATE ~ fitted(mod3restrict))
+lines(lowess(data3$ADM_RATE ~ fitted(mod3restrict)))
+
+```
+
+
+```{r}
+#adding %female, %firstgen, %lowinc, %mature, %pellgrant, %zipcodebach, %zipcodegrad
+
+data4 <- data3
+
+
+#EDA
+par(mfrow = c(2,2))
+hist(data4$FEMALE)
+hist(data4$PAR_ED_PCT_1STGEN)
+hist(data4$INC_PCT_LO)
+hist(data4$UG25ABV)
+hist(data$PCTPELL)
+hist(data4$PCT_BA)
+hist(data4$PCT_GRAD_PROF)
+
+plot(data4$ADM_RATE ~ data4$FEMALE)
+lines(lowess((data4$ADM_RATE ~ data4$FEMALE)))
+plot(data4$ADM_RATE ~ data4$PAR_ED_PCT_1STGEN)
+lines(lowess((data4$ADM_RATE ~ data4$PAR_ED_PCT_1STGEN)))
+plot(data4$ADM_RATE ~ data4$INC_PCT_LO)
+lines(lowess(data4$ADM_RATE ~ data4$INC_PCT_LO))
+plot(data4$ADM_RATE ~ data4$ UG25ABV)
+lines(lowess((data4$ADM_RATE ~ data4$ UG25ABV)))
+plot(data4$ADM_RATE ~ data4$PCTPELL)
+lines(lowess((data4$ADM_RATE ~ data4$PCTPELL)))
+
+plot(data4$ADM_RATE ~ data4$PCT_BA)
+lines(lowess((data4$ADM_RATE ~ data4$PCT_BA)))
+
+plot(data4$ADM_RATE ~ data4$PCT_GRAD_PROF)
+lines(lowess((data4$ADM_RATE ~ data4$PCT_GRAD_PROF)))
+
+
+
+#condition 2
+pairs(cbind(data3$MD_FAMINC, data4$FEMALE, data4$PAR_ED_PCT_1STGEN, data4$INC_PCT_LO, data4$UG25ABV, data4$PCTPELL, data4$PCT_BA, data4$PCT_GRAD_PROF), label = c("MDFAMINC", "FEMALE", "1stGen", "LowIncome", ">25", "PEll Grant", "Bachelors", "Grad / Proffesionanl"))
+
+plot(data4$UG25ABV ~ data4$PCTPELL)
+lines(lowess((data4$UG25ABV ~ data4$PCTPELL)))
+
+```
+
+
+```{r}
+#transforming and regressing regressing
+p4 <- powerTransform(cbind(data$ADM_RATE, data$POVERTY_RATE, data$AVGFACSAL, data$COSTT4_A, data$PFTFAC, data$FEMALE, data$PAR_ED_PCT_1STGEN, data$INC_PCT_LO, data$UG25ABV, data$PCTPELL, data$PCT_BA, data$PCT_GRAD_PROF)~1)
+summary(p4)
+
+data4$ADM_RATE = data$ADM_RATE ^ 2
+data4$POVERTY_RATE = data$POVERTY_RATE ^ -1
+data4$AVGFACSAL = data$AVGFACSAL ^ 0.5
+data4$COSTT4_A = data$COSTT4_A ^ 0.5
+data4$PFTFAC = data$PFTFAC
+data4$FEMALE = data$FEMALE ^ 2
+data4$PAR_ED_PCT_1STGEN = data$PAR_ED_PCT_1STGEN ^ 0.5
+data4$INC_PCT_LO = data$INC_PCT_LO ^ 1/5
+data4$UG25ABV = data$UG25ABV ^ 1/3
+data4$PCTPELL = data$PCTPELL ^ 0.5
+data4$PCT_BA = data$PCT_BA
+data4$PCT_GRAD_PROF = log(data$PCT_GRAD_PROF)
+
+```
+```{r}
+mod4 <- lm(data4$ADM_RATE~ data4$POVERTY_RATE + data4$NONPROFIT + data4$PROFIT + data4$AVGFACSAL + data4$COSTT4_A + data4$NUMBRANCH + data4$PFTFAC + data4$FEMALE + data4$PAR_ED_PCT_1STGEN + data4$INC_PCT_LO + data4$UG25ABV + data4$PCTPELL + data4$PCT_BA + data4$PCT_GRAD_PROF)
+summary(mod4)
+
+mod4restricted <- lm(data4$ADM_RATE~ data4$POVERTY_RATE + data4$NONPROFIT + data4$PROFIT + data4$AVGFACSAL + data4$COSTT4_A + data4$NUMBRANCH + data4$PFTFAC + data4$FEMALE + data4$PAR_ED_PCT_1STGEN + data4$INC_PCT_LO)
+summary(mod4restricted)
+
+anova(mod4restricted, mod4)
+
+plot(data4$ADM_RATE ~ fitted(mod4restricted))
+```
+
+```{r}
+#reboxcox
+p4r <- powerTransform(cbind(data$ADM_RATE, data$POVERTY_RATE, data$AVGFACSAL, data$COSTT4_A, data$PFTFAC, data$FEMALE, data$PAR_ED_PCT_1STGEN, data$INC_PCT_LO))
+summary(p4r)
+
+
+data4$ADM_RATE = data$ADM_RATE ^ 2
+data4$POVERTY_RATE = data$POVERTY_RATE ^ -1
+data4$AVGFACSAL = data$AVGFACSAL ^ 1/3
+data4$COSTT4_A = data$COSTT4_A ^ 1.3
+data4$PFTFAC = data$PFTFAC
+data4$FEMALE = data$FEMALE ^ 2
+data4$PAR_ED_PCT_1STGEN = data$PAR_ED_PCT_1STGEN ^ 0.5
+data4$INC_PCT_LO = data$INC_PCT_LO ^ 1/5
+
+mod4good <-lm(data4$ADM_RATE~ data4$POVERTY_RATE + data4$NONPROFIT + data4$PROFIT + data4$AVGFACSAL + data4$COSTT4_A + data4$NUMBRANCH + data4$PFTFAC + data4$FEMALE + data4$PAR_ED_PCT_1STGEN + data4$INC_PCT_LO)
+summary(mod4good)
+
+par(mfrow = c(2,1))
+plot(data4$ADM_RATE ~ fitted(mod4good))
+lines(lowess(data4$ADM_RATE ~ fitted(mod4good)))
+abline(a = 0, b = 1)
+plot(data3$ADM_RATE ~ fitted(mod3restrict))
+lines(lowess(data3$ADM_RATE ~ fitted(mod3restrict)))
+abline(a = 0, b = 1)
+
+pairs(cbind(data$ADM_RATE, data$POVERTY_RATE, data$AVGFACSAL, data$COSTT4_A, data$PFTFAC, data$FEMALE, data$PAR_ED_PCT_1STGEN, data$INC_PCT_LO), cbind("ADM", "POVERTY", "FACSAL", "COST", "%FT", "F", "1stGEN", "LO INC"))
+
+
+```
+
+
+```{r}
+#adding racial demographics
+data5 <- data4
+
+
+par(mfrow = c(3,2))
+hist(data5$PCT_WHITE)
+hist(data5$PCT_BLACK)
+hist(data5$PCT_ASIAN)
+hist(data5$PCT_HISPANIC)
+hist(data5$PCT_BORN_US)
+
+pairs(cbind(data5$ADM_RATE, data5$PCT_WHITE, data5$PCT_BLACK, data5$PCT_ASIAN, data5$PCT_HISPANIC, data5$PCT_BORN_US), cbind("ADM", "WHITE", "BLACK", "ASIAN", "HISPANIC", "DOMESTIC"))
+```
+
+
+```{r}
+p5 <- powerTransform(cbind(data$ADM_RATE, data$POVERTY_RATE, data$AVGFACSAL, data$COSTT4_A, data$PFTFAC, data$FEMALE, data$PAR_ED_PCT_1STGEN, data$INC_PCT_LO, data$PCT_WHITE, data$PCT_BLACK, data$PCT_ASIAN, data$PCT_HISPANIC, data$PCT_BORN_US))
+summary(p5)
+
+data5$ADM_RATE = data$ADM_RATE ^ 2
+data5$POVERTY_RATE = data$POVERTY_RATE ^ -0.5
+data5$AVGFACSAL = data$AVGFACSAL ^ 1/3
+data5$COSTT4_A = data$COSTT4_A ^ 1/3
+data5$PFTFAC = data$PFTFAC
+data5$FEMALE = data$FEMALE ^ 2
+data5$PAR_ED_PCT_1STGEN = data$PAR_ED_PCT_1STGEN
+data5$INC_PCT_LO = data$INC_PCT_LO ^ 1/3
+data5$PCT_WHITE = data$PCT_WHITE ^ 3
+data5$PUBLIC = data$PCT_BLACK ^ 0.5
+data5$PCT_ASIAN = log(data$PCT_ASIAN)
+data5$PCT_HISPANIC = log(data$PCT_HISPANIC)
+data5$PCT_BORN_US = data$PCT_BORN_US ^ 9
+```
+Transforming Variables
+
+```{r}
+
+mod5 <- lm(data5$ADM_RATE ~ data5$POVERTY_RATE + data5$NONPROFIT + data5$PROFIT + data5$AVGFACSAL + data5$COSTT4_A + data5$NUMBRANCH + data5$PFTFAC + data5$FEMALE + data5$PAR_ED_PCT_1STGEN + data5$INC_PCT_LO+ data5$PCT_WHITE + data5$PCT_BLACK + data5$PCT_ASIAN + data5$PCT_HISPANIC + data5$PCT_BORN_US + data5$HBCU + data5$PBI + data5$TRIBAL + data5$WOMENONLY)
+summary(mod5)
+
+mod5restrict <- lm(data5$ADM_RATE ~ data5$POVERTY_RATE + data5$NONPROFIT + data5$PROFIT + data5$AVGFACSAL + data5$COSTT4_A + data5$NUMBRANCH + data5$PFTFAC + data5$FEMALE + data5$PAR_ED_PCT_1STGEN + data5$PCT_BLACK + data5$PCT_HISPANIC)
+summary(mod5restrict)
+
+anova(mod5restrict, mod5)
+
+
+```
+
+```{r}
+
+#condition 1
+mod5good = mod5restrict
+summary(mod5good)
+
+plot(data5$ADM_RATE ~ fitted(mod5good))
+lines(lowess(data5$ADM_RATE ~ fitted(mod5good)))
+abline(a = 0, b = 1)
+
+data6 = data5
+data6$Region_1 = as.numeric(data6$REGION == 1)
+data6$Region_2 = as.numeric(data6$REGION == 2)
+data6$Region_3 = as.numeric(data6$REGION == 3)
+data6$Region_4 = as.numeric(data6$REGION == 4)
+data6$Region_5 = as.numeric(data6$REGION == 5)
+data6$Region_6 = as.numeric(data6$REGION == 6)
+data6$Region_7 = as.numeric(data6$REGION == 7)
+data6$Region_8 = as.numeric(data6$REGION == 8)
+data6$Region_9 = as.numeric(data6$REGION == 9)
+data6$REGION = NULL
+data6 <- na.omit(data6)
+
+mod6 <- lm(data6$ADM_RATE ~ data6$POVERTY_RATE + data6$NONPROFIT + data6$PROFIT + data6$AVGFACSAL + data6$COSTT4_A + data6$NUMBRANCH + data6$PFTFAC + data6$FEMALE + data6$PAR_ED_PCT_1STGEN + data6$PCT_BLACK + data6$PCT_HISPANIC + data6$Region_1 + data6$Region_2 + data6$Region_3 + data6$Region_4 + data6$Region_5 + data6$Region_6 + data6$Region_7 + data6$Region_8 + data6$Region_9)
+summary(mod6)
+
+mod6restrict <- lm(data6$ADM_RATE ~ data6$POVERTY_RATE + data6$NONPROFIT + data6$PROFIT + data6$AVGFACSAL + data6$COSTT4_A + data6$NUMBRANCH + data6$PFTFAC + data6$FEMALE + data6$PAR_ED_PCT_1STGEN + data6$PCT_BLACK + data6$PCT_HISPANIC + data6$Region_1 + data6$Region_2 + data6$Region_3 + data6$Region_4 + data6$Region_5)
+summary(mod6restrict)
+
+anova(mod6restrict, mod6)
+
+```
+
+
+```{r}
+data6$Region_1GEN = data6$PAR_ED_PCT_1STGEN * data6$Region_1
+data6$Region_2GEN = data6$PAR_ED_PCT_1STGEN * data6$Region_2
+data6$Region_3GEN = data6$PAR_ED_PCT_1STGEN * data6$Region_3
+data6$Region_4GEN = data6$PAR_ED_PCT_1STGEN * data6$Region_4
+data6$Region_5GEN = data6$PAR_ED_PCT_1STGEN * data6$Region_5
+data6$Region_6GEN = data6$PAR_ED_PCT_1STGEN * data6$Region_6
+data6$Region_7GEN = data6$PAR_ED_PCT_1STGEN * data6$Region_7
+data6$Region_8GEN = data6$PAR_ED_PCT_1STGEN * data6$Region_8
+data6$Region_9GEN = data6$PAR_ED_PCT_1STGEN * data6$Region_9
+
+mod6interact <- lm(data6$ADM_RATE ~ data6$POVERTY_RATE + data6$NONPROFIT + data6$PROFIT + data6$AVGFACSAL + data6$COSTT4_A + data6$NUMBRANCH + data6$PFTFAC + data6$FEMALE + data6$PAR_ED_PCT_1STGEN + data6$PCT_BLACK + data6$PCT_HISPANIC + data6$Region_1 + data6$Region_2 + data6$Region_3 + data6$Region_4 + data6$Region_5 + data6$Region_6 + data6$Region_7 + data6$Region_8 + data6$Region_9 + data6$Region_1GEN + data6$Region_2GEN + data6$Region_3GEN + data6$Region_4GEN + data6$Region_5GEN + data6$Region_6GEN + data6$Region_7GEN + data6$Region_8 + data6$Region_9GEN)
+summary(mod6interact)
+
+
+
+
+
+
+
+
+```
+
